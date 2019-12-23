@@ -17,6 +17,7 @@ import (
 	"github.com/binance-chain/tss-lib/crypto/paillier"
 	"github.com/binance-chain/tss-lib/crypto/vss"
 	"github.com/binance-chain/tss-lib/tss"
+	"github.com/golang/protobuf/proto"
 )
 
 // Implements Party
@@ -196,6 +197,127 @@ func (save LocalPartySaveData) OriginalIndex() (int, error) {
 		return -1, errors.New("a party index could not be recovered from Ks")
 	}
 	return index, nil
+}
+
+// Marshal converts LocalPartySaveData to a byte array.
+func (save *LocalPartySaveData) Marshal() ([]byte, error) {
+	localPreParams := &KGLocalPartySaveData_LocalPreParams{
+		PaillierSK: &KGLocalPartySaveData_LocalPreParams_PrivateKey{
+			PublicKey: save.LocalPreParams.PaillierSK.PublicKey.N.Bytes(),
+			LambdaN:   save.LocalPreParams.PaillierSK.LambdaN.Bytes(),
+			PhiN:      save.LocalPreParams.PaillierSK.PhiN.Bytes(),
+		},
+		NTilde: save.LocalPreParams.NTildei.Bytes(),
+		H1I:    save.LocalPreParams.H1i.Bytes(),
+		H2I:    save.LocalPreParams.H2i.Bytes(),
+	}
+
+	localSecrets := &KGLocalPartySaveData_LocalSecrets{
+		Xi:      save.LocalSecrets.Xi.Bytes(),
+		ShareID: save.LocalSecrets.ShareID.Bytes(),
+	}
+
+	marshalBigIntSlice := func(bigInts []*big.Int) [][]byte {
+		bytesSlice := make([][]byte, len(bigInts))
+		for i, bigInt := range bigInts {
+			bytesSlice[i] = bigInt.Bytes()
+		}
+		return bytesSlice
+	}
+
+	bigXj := make([][]byte, len(save.BigXj))
+	for i, bigX := range save.BigXj {
+		encoded, err := bigX.GobEncode()
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode BigXj: [%v]", err)
+		}
+		bigXj[i] = encoded
+	}
+
+	paillierPKs := make([][]byte, len(save.PaillierPKs))
+	for i, paillierPK := range save.PaillierPKs {
+		paillierPKs[i] = paillierPK.N.Bytes()
+	}
+
+	ecdsaPub, err := save.ECDSAPub.GobEncode()
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode ECDSAPub: [%v]", err)
+	}
+
+	return proto.Marshal(&KGLocalPartySaveData{
+		LocalPreParams: localPreParams,
+		LocalSecrets:   localSecrets,
+		Ks:             marshalBigIntSlice(save.Ks),
+		NTildej:        marshalBigIntSlice(save.NTildej),
+		H1J:            marshalBigIntSlice(save.H1j),
+		H2J:            marshalBigIntSlice(save.H2j),
+		BigXj:          bigXj,
+		PaillierPKs:    paillierPKs,
+		EcdsaPub:       ecdsaPub,
+	})
+}
+
+// Unmarshal converts a byte array back to LocalPartySaveData.
+func (save *LocalPartySaveData) Unmarshal(bytes []byte) error {
+	pbData := KGLocalPartySaveData{}
+	if err := pbData.XXX_Unmarshal(bytes); err != nil {
+		return fmt.Errorf("failed to unmarshal signer: [%v]", err)
+	}
+
+	paillierSK := &paillier.PrivateKey{
+		PublicKey: paillier.PublicKey{
+			N: new(big.Int).SetBytes(pbData.GetLocalPreParams().GetPaillierSK().GetPublicKey()),
+		},
+		LambdaN: new(big.Int).SetBytes(pbData.GetLocalPreParams().GetPaillierSK().GetLambdaN()),
+		PhiN:    new(big.Int).SetBytes(pbData.GetLocalPreParams().GetPaillierSK().GetPhiN()),
+	}
+
+	save.LocalPreParams = LocalPreParams{
+		PaillierSK: paillierSK,
+		NTildei:    new(big.Int).SetBytes(pbData.GetLocalPreParams().GetNTilde()),
+		H1i:        new(big.Int).SetBytes(pbData.GetLocalPreParams().GetH1I()),
+		H2i:        new(big.Int).SetBytes(pbData.GetLocalPreParams().GetH2I()),
+	}
+
+	save.LocalSecrets = LocalSecrets{
+		Xi:      new(big.Int).SetBytes(pbData.GetLocalSecrets().GetXi()),
+		ShareID: new(big.Int).SetBytes(pbData.GetLocalSecrets().GetShareID()),
+	}
+
+	unmarshalBigIntSlice := func(bytesSlice [][]byte) []*big.Int {
+		bigIntSlice := make([]*big.Int, len(bytesSlice))
+		for i, bytes := range bytesSlice {
+			bigIntSlice[i] = new(big.Int).SetBytes(bytes)
+		}
+		return bigIntSlice
+	}
+
+	save.BigXj = make([]*crypto.ECPoint, len(pbData.GetBigXj()))
+	for i, bigX := range pbData.GetBigXj() {
+		save.BigXj[i] = &crypto.ECPoint{}
+		if err := save.BigXj[i].GobDecode(bigX); err != nil {
+			return fmt.Errorf("failed to decode BigXj: [%v]", err)
+		}
+	}
+
+	save.PaillierPKs = make([]*paillier.PublicKey, len(pbData.GetPaillierPKs()))
+	for i, paillierPK := range pbData.GetPaillierPKs() {
+		save.PaillierPKs[i] = &paillier.PublicKey{
+			N: new(big.Int).SetBytes(paillierPK),
+		}
+	}
+
+	save.ECDSAPub = &crypto.ECPoint{}
+	if err := save.ECDSAPub.GobDecode(pbData.GetEcdsaPub()); err != nil {
+		return fmt.Errorf("failed to decode ECDSAPub: [%v]", err)
+	}
+
+	save.Ks = unmarshalBigIntSlice(pbData.GetKs())
+	save.NTildej = unmarshalBigIntSlice(pbData.GetNTildej())
+	save.H1j = unmarshalBigIntSlice(pbData.GetH1J())
+	save.H2j = unmarshalBigIntSlice(pbData.GetH2J())
+
+	return nil
 }
 
 func (p *LocalParty) PartyID() *tss.PartyID {
