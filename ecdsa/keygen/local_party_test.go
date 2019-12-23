@@ -301,6 +301,28 @@ keygen:
 	}
 }
 
+func TestLocalSaveDataMarshaling(t *testing.T) {
+	fixtures, err := LoadKeygenTestFixtures(1)
+	if err != nil {
+		t.Fatalf("failed to load test fixtures: %v", err)
+	}
+
+	data := fixtures[0]
+
+	marshaled, err := data.Marshal()
+	if err != nil {
+		t.Fatalf("failed to marshal data: %v", err)
+	}
+
+	unmarshaled := LocalPartySaveData{}
+
+	if err := unmarshaled.Unmarshal(marshaled); err != nil {
+		t.Fatalf("failed to unmarshal data: %v", err)
+	}
+
+	assert.Equal(t, data, unmarshaled)
+}
+
 func tryWriteTestFixtureFile(t *testing.T, index int, data LocalPartySaveData) {
 	fixtureFileName := makeTestFixtureFilePath(index)
 
